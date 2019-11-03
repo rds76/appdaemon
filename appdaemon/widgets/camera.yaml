@@ -8,6 +8,6 @@ fields:
 icons: []
 static_css:
   title_style: $camera_title_style
-  widget_style: $camera_widget_style  
+  widget_style: $camera_widget_style
 css: []
 static_icons: []
