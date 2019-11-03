@@ -41,7 +41,8 @@ function baseiframe(widget_id, url, skin, parameters)
             {
                 url = url + "?time=" + Math.floor((new Date).getTime()/1000);
             }
-            self.set_field(self, "img_src", url);
+            var imgUrl = getImgObjectUrl(self, url);
+            self.set_field(self, "img_src", imgUrl);
             size = self.parameters.img_list.length
         }
         else if ("entity_picture" in self.parameters)
@@ -55,7 +56,8 @@ function baseiframe(widget_id, url, skin, parameters)
             {
                 url = url + "?time=" + Math.floor((new Date).getTime()/1000);
             }
-            self.set_field(self, "img_src", url);
+            var imgUrl = getImgObjectUrl(self, url);
+            self.set_field(self, "img_src", imgUrl);
             size = 1
         }
         
@@ -68,5 +70,14 @@ function baseiframe(widget_id, url, skin, parameters)
             }
             setTimeout(function() {refresh_frame(self)}, self.parameters.refresh * 1000);
         }
+    }
+    
+    function getImgObjectUrl(self, url){
+        var auth = ("token" in self.parameters) ? {'Authorization': 'Bearer ' + self.parameters.token} : {}
+        $.get({url: url,  headers: auth , cache: false, xhrFields: {responseType: 'blob'}})
+             .done(function(data) {               
+                var url = window.URL || window.webkitURL;
+                return url.createObjectURL(data);
+              })
     }
 }
