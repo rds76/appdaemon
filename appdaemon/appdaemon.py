@@ -2,7 +2,7 @@ import os
 import os.path
 import concurrent.futures
 import threading
-import datetime
+
 
 class AppDaemon:
 
@@ -19,15 +19,19 @@ class AppDaemon:
         import appdaemon.threading
         import appdaemon.app_management as apps
         import appdaemon.callbacks as callbacks
+        import appdaemon.futures as futures
         import appdaemon.state as state
         import appdaemon.events as events
         import appdaemon.services as services
+        import appdaemon.sequences as sequences
+        import appdaemon.scheduler as scheduler
 
         self.logging = logging
         self.logging.register_ad(self)
         self.logger = logging.get_logger()
         self.threading = None
         self.callbacks = None
+        self.futures = None
         self.state = None
 
         self.config = kwargs
@@ -81,6 +85,7 @@ class AppDaemon:
         utils.process_arg(self, "time_zone", kwargs)
 
         self.tz = None
+        self.loop = loop
 
         self.logfile = None
         self.errfile = None
@@ -118,7 +123,7 @@ class AppDaemon:
         self.admin_delay = 1
         utils.process_arg(self, "admin_delay", kwargs, int=True)
 
-        self.max_utility_skew = self.utility_delay * 0.9
+        self.max_utility_skew = self.utility_delay * 2
         utils.process_arg(self, "max_utility_skew", kwargs, float=True)
 
         self.check_app_updates_profile = False
@@ -168,6 +173,22 @@ class AppDaemon:
             self.apps = True
 
         #
+        # Set up services
+        #
+        self.services = services.Services(self)
+
+        #
+        # Set up sequences
+        #
+        self.sequences = sequences.Sequences(self)
+
+        #
+        # Set up scheduler
+        #
+        self.sched = scheduler.Scheduler(self)
+
+
+        #
         # Set up state
         #
         self.state = state.State(self)
@@ -183,9 +204,10 @@ class AppDaemon:
         self.callbacks = callbacks.Callbacks(self)
 
         #
-        # Set up services
+        # Set up futures
         #
-        self.services = services.Services(self)
+        self.futures = futures.Futures(self)
+
 
         if self.apps is True:
             if self.app_dir is None:
@@ -206,10 +228,14 @@ class AppDaemon:
 
             self.threading = appdaemon.threading.Threading(self, kwargs)
 
-        self.loop = loop
-
         self.stopping = False
-
+        
+        #
+        # Set up Executor ThreadPool
+        #
+        if "threadpool_workers" in kwargs:
+            self.threadpool_workers = int(kwargs["threadpool_workers"])
+            
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.threadpool_workers)
 
         # Initialize Plugins

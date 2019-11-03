@@ -7,17 +7,21 @@ import time
 import cProfile
 import io
 import pstats
-import json
+import shelve
 import threading
-import iso8601
 import datetime
-import types
+import dateutil.parser
+import copy
+import json
+from functools import wraps
+
 
 if platform.system() != "Windows":
     import pwd
 
-__version__ = "4.0.0b1"
+__version__ = "4.0.0"
 secrets = None
+
 
 class Formatter(object):
     def __init__(self):
@@ -39,7 +43,8 @@ class Formatter(object):
         formater = self.types[type(value) if type(value) in self.types else object]
         return formater(self, value, self.indent)
 
-    def format_object(self, value, indent):
+    @staticmethod
+    def format_object(value, indent):
         return repr(value)
 
     def format_dict(self, value, indent):
@@ -67,49 +72,65 @@ class Formatter(object):
         return '(%s)' % (','.join(items) + self.lfchar + self.htchar * indent)
 
 
-class PersistentDict(dict):
-
+class PersistentDict(shelve.DbfilenameShelf):
     """
-    Persistent Dictionary subclass that uses JSON to persist its contents
+    Dict-like object that uses a Shelf to persist its contents.
     """
-
-    #TODO - this all runs in the loop at the moment ...
 
     def __init__(self, filename, safe, *args, **kwargs):
-        super().__init__(**kwargs)
-        self.filename = filename
+        # writeback=True allows for mutating objects in place, like with a dict.
+        super().__init__(filename, writeback=True)
         self.safe = safe
-        self.lock = threading.RLock()
-        self._load()
+        self.rlock = threading.RLock()
+        self.update(*args, **kwargs)
 
-    def _load(self):
-        with self.lock:
-            if os.path.isfile(self.filename) and os.path.getsize(self.filename) > 0:
-                with open(self.filename, 'r') as fh:
-                    self.update(False, json.load(fh))
+    def __contains__(self, key):
+        with self.rlock:
+            return super().__contains__(key)
 
-    def save(self):
-        with self.lock:
-            with open(self.filename, 'w') as fh:
-                json.dump(self, fh)
+    def __copy__(self):
+        return dict(self)
+
+    def __deepcopy__(self, memo):
+        return copy.deepcopy(dict(self), memo=memo)
+
+    def __delitem__(self, key):
+        with self.rlock:
+            super().__delitem__(key)
 
     def __getitem__(self, key):
-        return dict.__getitem__(self, key)
+        with self.rlock:
+            return super().__getitem__(key)
 
-    def __setitem__(self, key, val):
-        dict.__setitem__(self, key, val)
-        if self.safe is True:
-            self.save()
+    def __iter__(self):
+        with self.rlock:
+            for item in super().__iter__():
+                yield item
+
+    def __len__(self):
+        with self.rlock:
+            return super().__len__()
 
     def __repr__(self):
-        dictrepr = dict.__repr__(self)
-        return '%s(%s)' % (type(self).__name__, dictrepr)
+        return "%s(%r)" % (type(self).__name__, dict(self))
+
+    def __setitem__(self, key, val):
+        with self.rlock:
+            super().__setitem__(key, val)
+            if self.safe:
+                self.sync()
+
+    def sync(self):
+        with self.rlock:
+            super().sync()
 
     def update(self, save=True, *args, **kwargs):
-        for k, v in dict(*args, **kwargs).items():
-            self[k] = v
-            if self.safe is True and save is True:
-                self.save()
+        with self.rlock:
+            for key, value in dict(*args, **kwargs).items():
+                # use super().__setitem__() to prevent multiple save() calls
+                super().__setitem__(key, value)
+                if self.safe and save:
+                    self.sync()
 
 
 class AttrDict(dict):
@@ -151,6 +172,30 @@ class StateAttrs(dict):
         self.__dict__ = device_dict
 
 
+def sync_wrapper(coro):
+    @wraps(coro)
+    def inner_sync_wrapper(self, *args, **kwargs):
+        is_async = None
+        try:
+            # do this first to get the exception
+            # otherwise the coro could be started and never awaited
+            asyncio.get_event_loop()
+            is_async = True
+        except RuntimeError:
+            is_async = False
+
+        if is_async is True:
+            # don't use create_task. It's python3.7 only
+            f = asyncio.ensure_future(coro(self, *args, **kwargs))
+            self.AD.futures.add_future(self.name, f)
+        else:
+            f = run_coroutine_threadsafe(self, coro(self, *args, **kwargs))
+
+        return f
+
+    return inner_sync_wrapper
+
+
 def _timeit(func):
     @functools.wraps(func)
     def newfunc(*args, **kwargs):
@@ -183,8 +228,10 @@ def _profile_this(fn):
 
     return profiled_fn
 
+
 def format_seconds(secs):
     return str(timedelta(seconds=secs))
+
 
 def get_kwargs(kwargs):
     result = ""
@@ -243,8 +290,11 @@ def run_coroutine_threadsafe(self, coro):
             else:
                 print("Coroutine ({}) took too long, cancelling the task...".format(coro))
             future.cancel()
+    else:
+        self.logger.warning("LOOP NOT RUNNING. Returning NONE.")
 
     return result
+
 
 def deepcopy(data):
 
@@ -273,13 +323,11 @@ def deepcopy(data):
 
         assert id(result) != id(data)
 
-    elif isinstance(data, (int, float, type(None), str, bool)):
-        result = data
-
-    elif callable(data):
+    else:
         result = data
 
     return result
+
 
 def find_path(name):
     for path in [os.path.join(os.path.expanduser("~"), ".homeassistant"),
@@ -296,11 +344,13 @@ def single_or_list(field):
     else:
         return [field]
 
+
 def _sanitize_kwargs(kwargs, keys):
     for key in keys:
         if key in kwargs:
             del kwargs[key]
     return kwargs
+
 
 def process_arg(self, arg, args, **kwargs):
     if args:
@@ -321,15 +371,20 @@ def process_arg(self, arg, args, **kwargs):
             else:
                 setattr(self, arg, value)
 
+
 def find_owner(filename):
     return pwd.getpwuid(os.stat(filename).st_uid).pw_name
 
-def check_path(type, logger, path, pathtype="directory", permissions=None):
+
+def check_path(type, logger, inpath, pathtype="directory", permissions=None):
     #disable checks for windows platform
     if platform.system() == "Windows":
         return
 
     try:
+
+        path = os.path.abspath(inpath)
+
         perms = permissions
         if pathtype == "file":
             dir = os.path.dirname(path)
@@ -355,8 +410,7 @@ def check_path(type, logger, path, pathtype="directory", permissions=None):
                 fullpath = False
             elif not os.path.isdir(directory):
                 if os.path.isfile(directory):
-                    logger.warning("%s: %s exists, but is a file instead of a directory", type,
-    directory)
+                    logger.warning("%s: %s exists, but is a file instead of a directory", type, directory)
                     fullpath = False
             else:
                 owner = find_owner(directory)
@@ -390,8 +444,10 @@ def check_path(type, logger, path, pathtype="directory", permissions=None):
         # We just have to skip most of these tests
         pass
 
+
 def str_to_dt(time):
-    return iso8601.parse_date(time)
+    return dateutil.parser.parse(time)
+
 
 def dt_to_str(dt, tz=None):
     if dt == datetime.datetime(1970, 1, 1, 0, 0, 0, 0):
@@ -402,3 +458,6 @@ def dt_to_str(dt, tz=None):
         else:
             return dt.isoformat()
 
+
+def convert_json(data, **kwargs):
+    return json.dumps(data, default=str, **kwargs)

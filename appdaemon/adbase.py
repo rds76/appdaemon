@@ -1,5 +1,6 @@
 import threading
 from functools import wraps
+from copy import deepcopy
 
 import appdaemon.utils as utils
 import appdaemon.adapi as adapi
@@ -18,7 +19,7 @@ class Entities:
 #
 
 def app_lock(f):
-    """ Synchronization decorator. """
+    """Synchronization decorator."""
 
     @wraps(f)
     def f_app_lock(*args, **kw):
@@ -33,7 +34,7 @@ def app_lock(f):
 
 
 def global_lock(f):
-    """ Synchronization decorator. """
+    """Synchronization decorator."""
 
     @wraps(f)
     def f_global_lock(*args, **kw):
@@ -63,9 +64,12 @@ class ADBase:
         self._logging = logging
         self.config = config
         self.app_config = app_config
-        self.args = args
+        self.args = deepcopy(args)
         self.global_vars = global_vars
         self.namespace = "default"
+        self.app_dir = self.AD.app_dir
+        self.config_dir = self.AD.config_dir
+        self.dashboard_dir = self.AD.http.dashboard_dir
         self.logger = self._logging.get_child(name)
         self.err = self._logging.get_error().getChild(name)
         self.user_logs = {}
@@ -79,7 +83,6 @@ class ADBase:
 
         self.constraints = []
 
-
     #
     # API/Plugin
     #
@@ -89,8 +92,9 @@ class ADBase:
 
         return api
 
-    def get_plugin_api(self, plugin_name):
-        return utils.run_coroutine_threadsafe(self, self.AD.plugins.get_plugin_api(plugin_name, self.name, self._logging, self.args, self.config, self.app_config, self.global_vars))
+    @utils.sync_wrapper
+    async def get_plugin_api(self, plugin_name):
+        return await self.AD.plugins.get_plugin_api(plugin_name, self.name, self._logging, self.args, self.config, self.app_config, self.global_vars)
 
     #
     # Constraints

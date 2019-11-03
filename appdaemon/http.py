@@ -20,6 +20,7 @@ import appdaemon.admin as adadmin
 
 from appdaemon.appdaemon import AppDaemon
 
+
 def securedata(myfunc):
     """
     Take care of streams and service calls
@@ -82,6 +83,7 @@ class HTTP:
 
         self.appdaemon = appdaemon
         self.dashboard = dashboard
+        self.dashboard_dir = None
         self.admin = admin
         self.http = http
         self.api = api
@@ -139,17 +141,19 @@ class HTTP:
             if self.host == "":
                 raise ValueError("Invalid host for 'url'")
 
-            self.logger.info("Running on port %s", self.port)
-
             self.app = web.Application()
+
+            if "headers" in self.http:
+                self.app.on_response_prepare.append(self.add_response_headers)
 
             # Setup event stream
 
-            self.stream = stream.ADStream(self.AD, self.app, self.transport, self.on_connect, self.on_message)
+            self.stream = stream.ADStream(self.AD, self.app, self.transport)
 
             self.loop = loop
             self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
+            #TODO the `context` local varialble is never used after its initialization, maybe it can be removed
             if self.ssl_certificate is not None and self.ssl_key is not None:
                 context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
                 context.load_cert_chain(self.ssl_certificate, self.ssl_key)
@@ -196,8 +200,7 @@ class HTTP:
 
             if dashboard is not None:
                 self.logger.info("Starting Dashboards")
-
-                self.dashboard_dir = None
+                
                 self._process_arg("dashboard_dir", dashboard)
 
                 self.compile_on_start = True
@@ -258,9 +261,9 @@ class HTTP:
                                                            dashboard_dir=self.dashboard_dir,
                                                            fa4compatibility=self.fa4compatibility,
                                                            transport=self.transport,
-                                                           javascript_dir = self.javascript_dir,
-                                                           template_dir = self.template_dir,
-                                                           css_dir = self.css_dir,
+                                                           javascript_dir=self.javascript_dir,
+                                                           template_dir=self.template_dir,
+                                                           css_dir=self.css_dir,
                                                            fonts_dir=self.fonts_dir,
                                                            webfonts_dir=self.webfonts_dir,
                                                            images_dir=self.images_dir)
@@ -273,10 +276,11 @@ class HTTP:
             # Finish up and start the server
             #
 
-            handler = self.app.make_handler()
+            #handler = self.app.make_handler()
 
-            f = loop.create_server(handler, "0.0.0.0", int(self.port), ssl=context)
-            loop.create_task(f)
+            #f = loop.create_server(handler, "0.0.0.0", int(self.port), ssl=context)
+            #loop.create_task(f)
+
             if self.dashboard_obj is not None:
                 loop.create_task(self.update_rss())
 
@@ -286,6 +290,26 @@ class HTTP:
             self.logger.warning('-' * 60)
             self.logger.warning(traceback.format_exc())
             self.logger.warning('-' * 60)
+
+    async def start_server(self):
+
+        self.logger.info("Running on port %s", self.port)
+
+        self.runner = web.AppRunner(self.app)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, '0.0.0.0', int(self.port))
+        await site.start()
+
+    async def stop_server(self):
+        self.logger.info("Shutting down webserver")
+        #
+        # We sjould do this nut it makes AD hang so ...
+        #
+        #await self.runner.cleanup()
+
+    async def add_response_headers(self, request, response):
+        for header, value in self.http['headers'].items():
+            response.headers[header] = value
 
     def stop(self):
         self.stopping = True
@@ -357,23 +381,21 @@ class HTTP:
 
     async def update_rss(self):
         # Grab RSS Feeds
-
         if self.rss_feeds is not None and self.rss_update is not None:
             while not self.stopping:
                 try:
-                    if self.rss_last_update == None or (self.rss_last_update + self.rss_update) <= time.time():
+                    if self.rss_last_update is None or (self.rss_last_update + self.rss_update) <= time.time():
                         self.rss_last_update = time.time()
 
                         for feed_data in self.rss_feeds:
                             feed = await utils.run_in_executor(self, feedparser.parse, feed_data["feed"])
-
                             if "bozo_exception" in feed:
                                 self.logger.warning("Error in RSS feed %s: %s", feed_data["feed"], feed["bozo_exception"])
                             else:
                                 new_state = {"feed": feed}
 
-                                # RSS Feeds always live in the default namespace
-                                self.AD.state.set_state("default", feed_data["target"], new_state)
+                                # RSS Feeds always live in the admin namespace
+                                await self.AD.state.set_state("rss", "admin", feed_data["target"], state=new_state)
 
                     await asyncio.sleep(1)
                 except:
@@ -389,7 +411,7 @@ class HTTP:
 
     @securedata
     async def get_ad(self, request):
-        return web.json_response({"state": {"status": "active"}})
+        return web.json_response({"state": {"status": "active"}}, dumps=utils.convert_json)
 
     @securedata
     async def get_entity(self, request):
@@ -404,7 +426,7 @@ class HTTP:
 
             self.logger.debug("result = %s", state)
 
-            return web.json_response({"state": state})
+            return web.json_response({"state": state}, dumps=utils.convert_json)
         except:
             self.logger.warning('-' * 60)
             self.logger.warning("Unexpected error in get_entity()")
@@ -428,7 +450,7 @@ class HTTP:
             if state is None:
                 return self.get_response(request, 404, "Namespace Not Found")
 
-            return web.json_response({"state": state})
+            return web.json_response({"state": state}, dumps=utils.convert_json)
         except:
             self.logger.warning('-' * 60)
             self.logger.warning("Unexpected error in get_namespace()")
@@ -453,7 +475,7 @@ class HTTP:
             if state is None:
                 return self.get_response(request, 404, "Namespace Not Found")
 
-            return web.json_response({"state": state})
+            return web.json_response({"state": state}, dumps=utils.convert_json)
         except:
             self.logger.warning('-' * 60)
             self.logger.warning("Unexpected error in get_namespace_entities()")
@@ -471,7 +493,7 @@ class HTTP:
             state = await self.AD.state.list_namespaces()
             self.logger.debug("result = %s", state)
 
-            return web.json_response({"state": state})
+            return web.json_response({"state": state}, dumps=utils.convert_json)
         except:
             self.logger.warning('-' * 60)
             self.logger.warning("Unexpected error in get_namespaces()")
@@ -489,7 +511,7 @@ class HTTP:
             state = self.AD.services.list_services()
             self.logger.debug("result = %s", state)
 
-            return web.json_response({"state": state})
+            return web.json_response({"state": state}, dumps=utils.convert_json)
         except:
             self.logger.warning('-' * 60)
             self.logger.warning("Unexpected error in get_services()")
@@ -510,7 +532,7 @@ class HTTP:
 
             self.logger.debug("result = %s", state)
 
-            return web.json_response({"state": state})
+            return web.json_response({"state": state}, dumps=utils.convert_json)
         except:
             self.logger.warning('-' * 60)
             self.logger.warning("Unexpected error in get_state()")
@@ -518,6 +540,22 @@ class HTTP:
             self.logger.warning(traceback.format_exc())
             self.logger.warning('-' * 60)
             return self.get_response(request, 500, "Unexpected error in get_state()")
+
+    @securedata
+    async def get_logs(self, request):
+        try:
+            self.logger.debug("get_logs() called")
+
+            logs = await utils.run_in_executor(self, self.AD.logging.get_admin_logs)
+
+            return web.json_response({"logs": logs}, dumps=utils.convert_json)
+        except:
+            self.logger.warning('-' * 60)
+            self.logger.warning("Unexpected error in get_logs()")
+            self.logger.warning('-' * 60)
+            self.logger.warning(traceback.format_exc())
+            self.logger.warning('-' * 60)
+            return self.get_response(request, 500, "Unexpected error in get_logs()")
 
     # noinspection PyUnusedLocal
     @securedata
@@ -536,7 +574,7 @@ class HTTP:
             # Some value munging for dashboard
             #
             for key in data:
-                if key == "service" or key == "namespace":
+                if key == "service":
                     pass
                 elif key == "rgb_color":
                     m = re.search('\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)', data[key])
@@ -570,6 +608,41 @@ class HTTP:
             self.logger.warning(traceback.format_exc())
             self.logger.warning('-' * 60)
             return web.Response(status=500)
+    
+    @securedata
+    async def fire_event(self, request):
+        try:
+            try:
+                data = await request.json()
+            except json.decoder.JSONDecodeError:
+                return self.get_response(request, 400, "JSON Decode Error")
+
+            args = {}
+            namespace = request.match_info.get('namespace')
+            event = request.match_info.get('event')
+            #
+            # Some value munging for dashboard
+            #
+            for key in data:
+                if key == "event":
+                    pass
+
+                else:
+                    args[key] = data[key]
+
+            self.logger.debug("fire_event() args = %s", args)
+
+            await self.AD.events.fire_event(namespace, event, **args)
+
+            return web.Response(status=200)
+
+        except:
+            self.logger.warning('-' * 60)
+            self.logger.warning("Unexpected error in fire_event()")
+            self.logger.warning('-' * 60)
+            self.logger.warning(traceback.format_exc())
+            self.logger.warning('-' * 60)
+            return web.Response(status=500)
 
     # noinspection PyUnusedLocal
     async def not_found(self, request):
@@ -580,24 +653,20 @@ class HTTP:
     async def stream_update(self, namespace, data):
         #self.logger.debug("stream_update() %s:%s", namespace, data)
         data["namespace"] = namespace
-        await self.stream.send_update(data)
-
-    async def on_message(self, data):
-        self.access.info("New dashboard connected: %s", data)
-
-    async def on_connect(self):
-        pass
+        self.AD.thread_async.call_async_no_wait(self.stream.send_update, data)
 
     # Routes, Status and Templates
 
     def setup_api_routes(self):
         self.app.router.add_post('/api/appdaemon/service/{namespace}/{domain}/{service}', self.call_service)
+        self.app.router.add_post('/api/appdaemon/event/{namespace}/{event}', self.fire_event)
         self.app.router.add_get('/api/appdaemon/service/', self.get_services)
         self.app.router.add_get('/api/appdaemon/state/{namespace}/{entity}', self.get_entity)
         self.app.router.add_get('/api/appdaemon/state/{namespace}', self.get_namespace)
         self.app.router.add_get('/api/appdaemon/state/{namespace}/', self.get_namespace_entities)
         self.app.router.add_get('/api/appdaemon/state/', self.get_namespaces)
         self.app.router.add_get('/api/appdaemon/state', self.get_state)
+        self.app.router.add_get('/api/appdaemon/logs', self.get_logs)
         self.app.router.add_post('/api/appdaemon/{app}', self.call_api)
         self.app.router.add_get('/api/appdaemon', self.get_ad)
 
@@ -628,7 +697,6 @@ class HTTP:
         else:
             self.app.router.add_get('/', self.error_page)
 
-
     def setup_dashboard_routes(self):
         self.app.router.add_get('/list', self.list_dash)
         self.app.router.add_get('/{name}', self.load_dash)
@@ -654,7 +722,7 @@ class HTTP:
         res = "<html><head><title>{} {}</title></head><body><h1>{} {}</h1>Error in API Call</body></html>".format(code, error, code, error)
         app = request.match_info.get('app', "system")
         if code == 200:
-            self.access.info("API Call to %s: status: %s %s", app, code)
+            self.access.info("API Call to %s: status: %s", app, code)
         else:
             self.logger.warning("API Call to %s: status: %s, %s", app, code, error)
         return web.Response(body=res, status=code)
@@ -686,7 +754,7 @@ class HTTP:
         response = "OK"
         self.access.info("API Call to %s: status: %s %s", app, code, response)
 
-        return web.json_response(ret, status = code)
+        return web.json_response(ret, status=code, dumps=utils.convert_json)
 
     # Routes, Status and Templates
 
@@ -749,7 +817,7 @@ class HTTP:
             template = env.get_template("logon.jinja2")
             rendered_template = template.render(params)
 
-            return (rendered_template)
+            return rendered_template
 
         except:
             self.logger.warning('-' * 60)
@@ -771,7 +839,7 @@ class HTTP:
             template = env.get_template("error.jinja2")
             rendered_template = template.render(params)
 
-            return (rendered_template)
+            return rendered_template
 
         except:
             self.logger.warning('-' * 60)

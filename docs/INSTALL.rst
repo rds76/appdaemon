@@ -4,7 +4,7 @@ Installation
 Installation is either by pip3 or Docker. There is also an official
 hass.io build.
 
-Note: Windows and Raspbian users should check the environment specific section at the end of this doc for additional information.
+Note: Windows and Raspbian users should check the environment-specific section at the end of this doc for additional information.
 
 Install and Run using Docker
 ----------------------------
@@ -21,7 +21,7 @@ Before running ``AppDaemon`` you will need to install the package:
     $ sudo pip3 install appdaemon
 
 
-**Do not** install this in the same Python virtual environment as Home Assistant. If you do that then Home Assistant will stop working.
+**Do not** install this in the same Python virtual environment as Home Assistant. If you do that, then Home Assistant will stop working.
 
 Install Using hass.io
 ---------------------
@@ -115,8 +115,8 @@ documentation.
 Starting At Reboot
 ------------------
 
-To run ``AppDaemon`` at reboot, you can set it up to run as a systemd
-service as follows.
+To run ``AppDaemon`` at reboot, you can set it up to run as a ``systemd
+service`` as follows.
 
 Add Systemd Service (appdaemon@appdaemon.service)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -128,7 +128,7 @@ First, create a new file using vi:
     $ sudo vi /etc/systemd/system/appdaemon@appdaemon.service
 
 Add the following, making sure to use the correct full path for your
-config directory. Also make sure you edit the ``User`` to a valid user
+config directory. Also, make sure you edit the ``User`` to a valid user
 to run AppDaemon, usually the same user as you are running Home
 Assistant with is a good choice.
 
@@ -144,7 +144,7 @@ Assistant with is a good choice.
     [Install]
     WantedBy=multi-user.target
 
-The above should work for hasbian, but if your homeassistant service is
+The above should work for hasbian, but if your ``homeassistant`` service is
 named something different you may need to change the ``After=`` lines to
 reflect the actual name.
 
@@ -174,11 +174,11 @@ Windows Support
 ---------------
 
 AppDaemon runs under windows and has been tested with the official 3.5.2
-release of python. There are a couple of caveats however:
+release of python. However, there are a couple of caveats:
 
 -  The ``-d`` or ``--daemonize`` option is not supported owing to
    limitations in the Windows implementation of Python.
--  Some internal diagnostics are disabled. This is not user visible but
+-  Some internal diagnostics are disabled. This is not user-visible but
    may hamper troubleshooting of internal issues if any crop up
 
 AppDaemon can be installed exactly as per the instructions for every
@@ -189,7 +189,7 @@ Windows Under the Linux Subsystem
 
 Windows 10 now supports a full Linux bash environment that is capable of
 running Python. This is essentially an Ubuntu distribution and works
-extremely well. It is possible to run AppDaemon in exactly the same way
+extremely well. It is possible to run AppDaemon in the same way
 as for Linux distributions, and none of the above Windows Caveats apply
 to this version. This is the recommended way to run AppDaemon in a
 Windows 10 and later environment.
@@ -209,32 +209,29 @@ Raspberry Pi Docker
 -------------------
 
 Since the official Docker image isn't compatible with raspberry Pi, you will need to build your own docker image
-from the downloaded repository. The Dockerfile also needs a couple of changes:
-
-1. Change the image line to use a Resin image:
-
-``FROM arm32v7/python:3.6``
-
-2. Change the ``RUN`` line to the following:
-
-``RUN pip3 install requests && pip3 install .``
-
-You can then build and run a docker image locally as follows:
+from the downloaded repository.
 
 .. code:: bash
+
     $ git clone https://github.com/home-assistant/appdaemon.git
     $ cd appdaemon
+
+You can then build and run the docker image locally as follows:
+
+.. code:: bash
+
     $ docker build -t appdaemon .
-    $ docker run -t -i --name=appdaemon -p 5050:5050 \
-      -e HA_URL="<Your HA URL>" \
-      -e HA_KEY="<your HA Key>" \
-      -e DASH_URL="<Your DASH URL>" \
-      -v <Your AppDaemon conf dir>:/conf \
+    $ docker run --name=appdaemon -d -p 5050:5050 \
+      --restart=always \
+      -e HA_URL="<Your HA_URL value>" \
+      -e TOKEN="<your TOKEN value>" \
+      -e DASH_URL="http://$HOSTNAME:5050" \
+      -v <your_conf_folder>:/conf \
       appdaemon:latest
 
 For more information on running AppDaemon under Docker, see the Docker Tutorial. The key difference is that
 you will be running a locally built instance of AppDaemon rather than one from Docker Hub, so for run commands,
-make usre yo uspecify "appdaemon:latest" as the image, as above, rather than "acockburn/appdaemon:latest" as the tutorial states.
+make sure to specify "appdaemon:latest" as the image, as above, rather than "acockburn/appdaemon:latest" as the tutorial states.
 
 At the time of writing, @torkildr is maintaining a linked Raspberry Pi image here:
 

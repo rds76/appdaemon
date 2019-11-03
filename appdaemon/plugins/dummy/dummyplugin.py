@@ -27,7 +27,7 @@ class DummyPlugin(PluginBase):
         with open(args["configuration"], 'r') as yamlfd:
             config_file_contents = yamlfd.read()
         try:
-            self.config = yaml.load(config_file_contents)
+            self.config = yaml.load(config_file_contents, Loader=yaml.SafeLoader)
         except yaml.YAMLError as exc:
             self.logger.warning("Error loading configuration")
             if hasattr(exc, 'problem_mark'):
@@ -81,7 +81,7 @@ class DummyPlugin(PluginBase):
     async def get_updates(self):
         await self.AD.plugins.notify_plugin_started(self.name, self.namespace, self.get_metadata(), self.get_complete_state(), True)
         while not self.stopping:
-            ret = None
+
             if self.current_event >= len(self.config["sequence"]["events"]) and ("loop" in self.config["sequence"] and self.config["loop"] == 0 or "loop" not in self.config["sequence"]):
                 while not self.stopping:
                     await asyncio.sleep(1)

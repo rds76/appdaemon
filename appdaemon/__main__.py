@@ -1,4 +1,12 @@
 #!/usr/bin/python3
+
+"""AppDaemon main() module.
+
+AppDaemon module that contains main() along with argument parsing, instantiation of the AppDaemon and HTTP Objects,
+also creates the loop and kicks everything off
+
+"""
+
 import sys
 import argparse
 import os
@@ -8,22 +16,32 @@ import platform
 import yaml
 import asyncio
 import pytz
+import pid
 
 import appdaemon.utils as utils
 import appdaemon.appdaemon as ad
 import appdaemon.http as adhttp
 import appdaemon.logging as logging
 
-class ADMain():
+
+class ADMain:
+    """
+    Class to encapsulate all main() functionality.
+    """
 
     def __init__(self):
+        """Constructor."""
+
         self.logging = None
         self.error = None
         self.diag = None
         self.AD = None
         self.http_object = None
+        self.logger = None
 
     def init_signals(self):
+        """Setup signal handling."""
+
         # Windows does not support SIGUSR1 or SIGUSR2
         if platform.system() != "Windows":
             signal.signal(signal.SIGUSR1, self.handle_sig)
@@ -33,6 +51,21 @@ class ADMain():
 
     # noinspection PyUnusedLocal
     def handle_sig(self, signum, frame):
+        """Function to handle signals.
+
+        SIGUSR1 will result in internal info being dumped to the DIAG log
+        SIGHUP will force a reload of all apps
+        SIGINT and SIGTEM both result in AD shutting down
+
+        Args:
+            signum: Signal number being processed.
+            frame: frame - unused
+
+        Returns:
+            None.
+
+        """
+
         if signum == signal.SIGUSR1:
             self.AD.thread_async.call_async_no_wait(self.AD.sched.dump_schedule)
             self.AD.thread_async.call_async_no_wait(self.AD.callbacks.dump_callbacks)
@@ -40,7 +73,7 @@ class ADMain():
             self.AD.thread_async.call_async_no_wait(self.AD.app_management.dump_objects)
             self.AD.thread_async.call_async_no_wait(self.AD.sched.dump_sun)
         if signum == signal.SIGHUP:
-            self.AD.thread_async.call_async_no_wait(self.AD.app_management.check_app_updates, True)
+            self.AD.thread_async.call_async_no_wait(self.AD.app_management.check_app_updates, mode="term")
         if signum == signal.SIGINT:
             self.logger.info("Keyboard interrupt")
             self.stop()
@@ -49,6 +82,12 @@ class ADMain():
             self.stop()
 
     def stop(self):
+        """Called by the signal handler to shut AD down.
+
+        Returns:
+            None.
+        """
+
         self.logger.info("AppDaemon is shutting down")
         self.AD.stop()
         if self.http_object is not None:
@@ -56,6 +95,19 @@ class ADMain():
 
     # noinspection PyBroadException,PyBroadException
     def run(self, appdaemon, hadashboard, admin, api, http):
+        """ Start AppDaemon up after initial argument parsing.
+
+        Args:
+            appdaemon: Config for AppDaemon Object.
+            hadashboard: Config for HADashboard Object.
+            admin: Config for admin Object.
+            api: Config for API Object
+            http: Config for HTTP Object
+
+        Returns:
+            None.
+
+        """
 
         try:
             loop = asyncio.get_event_loop()
@@ -76,12 +128,6 @@ class ADMain():
                     self.logger.info("HTTP configured but no consumers are configured - disabling")
                 else:
                     self.logger.info("HTTP is disabled")
-                appdaemon = None
-                hadashboard = None
-                admin = None
-                api = False
-
-
 
             self.logger.debug("Start Main Loop")
 
@@ -89,7 +135,7 @@ class ADMain():
             loop.run_until_complete(asyncio.gather(*pending))
 
             #
-            # Now we are sutting down - perform and necessary cleanup
+            # Now we are shutting down - perform any necessary cleanup
             #
 
             self.AD.terminate()
@@ -104,13 +150,15 @@ class ADMain():
 
             self.logger.debug("End Loop")
 
-            self.logger.info("AppDeamon Exited")
+            self.logger.info("AppDaemon Exited")
 
     # noinspection PyBroadException
     def main(self):
+        """Initial AppDaemon entry point.
 
-        # import appdaemon.stacktracer
-        # appdaemon.stacktracer.trace_start("/tmp/trace.html")
+        Parse command line arguments, load configuration, set up logging.
+
+        """
 
         self.init_signals()
 
@@ -119,7 +167,7 @@ class ADMain():
         parser = argparse.ArgumentParser()
 
         parser.add_argument("-c", "--config", help="full path to config directory", type=str, default=None)
-        parser.add_argument("-p", "--pidfile", help="full path to PID File", default="/tmp/hapush.pid")
+        parser.add_argument("-p", "--pidfile", help="full path to PID File", default=None)
         parser.add_argument("-t", "--timewarp", help="speed that the scheduler will work at for time travel", default=1, type=float)
         parser.add_argument("-s", "--starttime", help="start time for scheduler <YYYY-MM-DD HH:MM:SS>", type=str)
         parser.add_argument("-e", "--endtime", help="end time for scheduler <YYYY-MM-DD HH:MM:SS>", type=str, default=None)
@@ -134,6 +182,7 @@ class ADMain():
         args = parser.parse_args()
 
         config_dir = args.config
+        pidfile = args.pidfile
 
         if config_dir is None:
             config_file_yaml = utils.find_path("appdaemon.yaml")
@@ -158,11 +207,11 @@ class ADMain():
             #
             # Initially load file to see if secret directive is present
             #
-            yaml.add_constructor('!secret', utils._dummy_secret)
+            yaml.add_constructor('!secret', utils._dummy_secret, Loader=yaml.SafeLoader)
             with open(config_file_yaml, 'r') as yamlfd:
                 config_file_contents = yamlfd.read()
 
-            config = yaml.load(config_file_contents)
+            config = yaml.load(config_file_contents, Loader=yaml.SafeLoader)
 
             if "secrets" in config:
                 secrets_file = config["secrets"]
@@ -176,7 +225,7 @@ class ADMain():
                 with open(secrets_file, 'r') as yamlfd:
                     secrets_file_contents = yamlfd.read()
 
-                utils.secrets = yaml.load(secrets_file_contents)
+                utils.secrets = yaml.load(secrets_file_contents, Loader=yaml.SafeLoader)
 
             else:
                 if "secrets" in config:
@@ -186,12 +235,12 @@ class ADMain():
             #
             # Read config file again, this time with secrets
             #
-            yaml.add_constructor('!secret', utils._secret_yaml)
+            yaml.add_constructor('!secret', utils._secret_yaml, Loader=yaml.SafeLoader)
 
             with open(config_file_yaml, 'r') as yamlfd:
                 config_file_contents = yamlfd.read()
 
-            config = yaml.load(config_file_contents)
+            config = yaml.load(config_file_contents, Loader=yaml.SafeLoader)
 
         except yaml.YAMLError as exc:
             print("ERROR", "Error loading configuration")
@@ -284,7 +333,6 @@ class ADMain():
         if "time_zone" in config["appdaemon"]:
             self.logging.set_tz(pytz.timezone(config["appdaemon"]["time_zone"]))
 
-
         # Startup message
 
         self.logger.info("AppDaemon Version %s starting", utils.__version__)
@@ -293,13 +341,47 @@ class ADMain():
         self.logger.debug("AppDaemon Section: %s", config.get("appdaemon"))
         self.logger.debug("HADashboard Section: %s", config.get("hadashboard"))
 
+        exit = False
+
+        if "time_zone" not in config["appdaemon"]:
+            self.logger.error("time_zone not specified in appdaemon.cfg")
+            exit = True
+
+        if "latitude" not in config["appdaemon"]:
+            self.logger.error("latitude not specified in appdaemon.cfg")
+            exit = True
+
+        if "longitude" not in config["appdaemon"]:
+            self.logger.error("longitude not specified in appdaemon.cfg")
+            exit = True
+
+        if "elevation" not in config["appdaemon"]:
+            self.logger.error("elevation not specified in appdaemon.cfg")
+            exit = True
+
+        if exit is True:
+            sys.exit(1)
+
         utils.check_path("config_file", self.logger, config_file_yaml, pathtype="file")
 
-        self.run(appdaemon, hadashboard, admin, api, http)
+        if pidfile is not None:
+            self.logger.info("Using pidfile: %s", pidfile)
+            dir = os.path.dirname(pidfile)
+            name = os.path.basename(pidfile)
+            try:
+                with pid.PidFile(name, dir) as p:
+                    self.run(appdaemon, hadashboard, admin, api, http)
+            except pid.PidFileError:
+                self.logger.error("Unable to aquire pidfile - terminating")
+        else:
+            self.run(appdaemon, hadashboard, admin, api, http)
+
 
 def main():
+    """Called when run from the command line."""
     admain = ADMain()
     admain.main()
+
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,7 @@
 import asyncio
 from appdaemon.appdaemon import AppDaemon
 
+
 class AdminLoop:
 
     def __init__(self, ad: AppDaemon):
@@ -17,6 +18,7 @@ class AdminLoop:
         while not self.stopping:
             if self.AD.http.stats_update != "none" and self.AD.sched is not None:
                 await self.AD.threading.get_callback_update()
+                await self.AD.threading.get_q_update()
 
             await asyncio.sleep(self.AD.admin_delay)
 

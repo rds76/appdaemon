@@ -10,6 +10,7 @@ import cProfile
 import io
 import pstats
 import datetime
+from collections import OrderedDict
 
 import appdaemon.utils as ha
 
@@ -179,7 +180,8 @@ class Dashboard:
 
         return fields
 
-    def _get_styles(self, style_str, name, field):
+    @staticmethod
+    def _get_styles(style_str, name, field):
         #
         # Parse styles in order from a string and allow later entries to override earlier ones
         #
@@ -237,7 +239,6 @@ class Dashboard:
             return value, templates
         else:
             return value, {}
-
 
     # noinspection PyUnresolvedReferences
     def _load_widget(self, dash, includes, name, css_vars, global_parameters):
@@ -314,7 +315,7 @@ class Dashboard:
                     widget = yamlfd.read()
                 final_widget = self._load_yaml(widget)
             except yaml.YAMLError as exc:
-                self._log_error(dash, name, "Error in widget definition '%s':", widget_type)
+                self._log_error(dash, name, "Error in widget definition '%s':".format(widget_type))
                 self._log_yaml_dash_error(dash, name, exc)
                 return self.error_widget("Error loading widget definition")
 
@@ -371,12 +372,14 @@ class Dashboard:
             self.logger.warning("Unable to find widget type '%s'", widget_type)
             self.logger.warning(traceback.format_exc())
             # Return some valid data so the browser will render a blank widget
-            return self.error_widget("Unable to find widget type '%s'", widget_type)
+            return self.error_widget("Unable to find widget type '{}'".format(widget_type))
 
-    def error_widget(self, error):
+    @staticmethod
+    def error_widget(error):
         return {"widget_type": "baseerror", "fields": {"err": error}, "static_css":{"widget_style": ""}}
 
-    def _widget_exists(self, widgets, _id):
+    @staticmethod
+    def _widget_exists(widgets, _id):
         for widge in widgets:
             if widge["id"] == _id:
                 return True
@@ -385,12 +388,12 @@ class Dashboard:
     def _add_layout(self, value, layout, occupied, dash, page, includes, css_vars, global_parameters):
         if value is None:
             return
-        widgetdimensions = re.compile("^(.+)\\((\d+)x(\d+)\\)$")
+        widget_dimensions = re.compile("^(.+)\\((\d+)x(\d+)\\)$")
         value = ''.join(value.split())
         widgets = value.split(",")
         column = 1
         for wid in widgets:
-            size = widgetdimensions.search(wid)
+            size = widget_dimensions.search(wid)
             if size:
                 name = size.group(1)
                 xsize = size.group(2)
@@ -410,8 +413,7 @@ class Dashboard:
 
             if name != "spacer":
                 sanitized_name = name.replace(".", "-").replace("_", "-").lower()
-                widget = {}
-                widget["id"] = "{}-{}".format(page, sanitized_name)
+                widget = {"id": "{}-{}".format(page, sanitized_name)}
 
                 if self._widget_exists(dash["widgets"], widget["id"]):
                     self.logger.warning("Duplicate widget name '%s' - ignored", name)
@@ -426,7 +428,8 @@ class Dashboard:
                     occupied["{}x{}".format(x, y)] = 1
             column += int(xsize)
 
-    def _merge_dashes(self, dash1, dash2):
+    @staticmethod
+    def _merge_dashes(dash1, dash2):
         for key in dash2:
             if key == "widgets":
                 for widget in dash2["widgets"]:
@@ -451,7 +454,8 @@ class Dashboard:
         for line in self._yaml_error_lines(exc):
             self._log_error(dash, name, line)
 
-    def _yaml_error_lines(self, exc):
+    @staticmethod
+    def _yaml_error_lines(exc):
         lines = []
         if hasattr(exc, 'problem_mark'):
             lines.append("parser says")
@@ -463,8 +467,14 @@ class Dashboard:
         return lines
     
     def _load_yaml(self, stream):
-        yaml.add_constructor('!secret', ha._secret_yaml)
-        return yaml.load(stream)
+        myyaml = None
+        yaml.add_constructor('!secret', ha._secret_yaml, Loader=yaml.SafeLoader)
+        try:
+            myyaml = yaml.load(stream, Loader=yaml.SafeLoader)
+        except ValueError as v:
+            self.logger.warning(str(v))
+
+        return myyaml
 
     def _create_dash(self, name, css_vars):
         dash, layout, occupied, includes = self._create_sub_dash(name, "dash", 0, {}, [], 1, css_vars, None)
@@ -545,7 +555,8 @@ class Dashboard:
 
         return dash, layout, occupied, includes
 
-    def _latest_file(self, path):
+    @staticmethod
+    def _latest_file(path):
         late_file = datetime.datetime.fromtimestamp(86400)
         for root, subdirs, files in os.walk(path):
             for file in files:
@@ -673,7 +684,7 @@ class Dashboard:
                 widget_dirs = os.listdir(path=widget_dir)
                 for widget in widget_dirs:
                     if widget_dir == os.path.join(self.config_dir, "custom_widgets"):
-                        self.logger.info("Loading custom widget '%s'", widget)
+                        self.access.info("Loading custom widget '%s'", widget)
                     if os.path.isdir(os.path.join(widget_dir, widget)):
                         jspath = os.path.join(widget_dir, widget, "{}.js".format(widget))
                         csspath = os.path.join(widget_dir, widget, "{}.css".format(widget))
@@ -692,8 +703,8 @@ class Dashboard:
             return {}
 
         files = os.listdir(self.dashboard_dir)
-        dash_list = {}
-        for file in files:
+        dash_list = OrderedDict()
+        for file in sorted(files):
             if file.endswith('.pydash'):
                 name = file.replace('.pydash', '')
                 dash_list[name] = "{}/{}".format(self.base_url, name)
@@ -701,8 +712,7 @@ class Dashboard:
                 name = file.replace('.dash', '')
                 dash_list[name] = "{}/{}".format(self.base_url, name)
 
-        params = {"dash_list": dash_list}
-        params["main"] = "1"
+        params = {"dash_list": dash_list, "main": "1"}
 
         return params
 
@@ -713,7 +723,7 @@ class Dashboard:
         #
         skindir = os.path.join(self.config_dir, "custom_css", skin)
         if os.path.isdir(skindir):
-            self.logger.info("Loading custom skin '%s'", skin)
+            self.access.info("Loading custom skin '%s'", skin)
         else:
             # Not a custom skin, try product skins
             skindir = os.path.join(self.css_dir, skin)
@@ -765,7 +775,7 @@ class Dashboard:
             if do_compile is False:
                 return {"errors": []}
 
-        self.logger.info("Compiling dashboard '%s'", name)
+        self.access.info("Compiling dashboard '%s'", name)
 
         dash = self._get_dash(name, skin, skindir)
         if dash is None:
@@ -820,8 +830,6 @@ class Dashboard:
 
             if dash is None:
                 errors = ["An unrecoverable error occured - check log for details"]
-                head_includes = []
-                body_includes = []
             else:
                 errors = dash["errors"]
 
@@ -836,12 +844,12 @@ class Dashboard:
                 scalable = True
 
             if "dash_list" in dash and dash["dash_list"] != {}:
-                print(dash)
                 dash_list = dash["dash_list"]["dash_list"]
             else:
                 dash_list = []
 
-            if errors != []:
+            # add errors if we got any
+            if errors:
                 params = {"title": self.title, "errors": errors, "name": name.lower(), "dash_list": dash_list}
 
                 env = Environment(
@@ -874,7 +882,7 @@ class Dashboard:
                 template = env.get_template("dashboard.jinja2")
                 rendered_template = template.render(params)
 
-            return(rendered_template)
+            return rendered_template
 
         except:
             self.logger.warning('-' * 60)
@@ -885,7 +893,7 @@ class Dashboard:
             return self.html_error()
 
     def html_error(self):
-        params = {"errors": ["An unrecoverable error occured fetching dashboard, check log for details"]}
+        params = {"errors": ["An unrecoverable error occurred fetching dashboard, check log for details"]}
         env = Environment(
             loader=FileSystemLoader(self.template_dir),
             autoescape=select_autoescape(['html', 'xml'])
@@ -894,7 +902,7 @@ class Dashboard:
         template = env.get_template("list.jinja2")
         rendered_template = template.render(params)
 
-        return (rendered_template)
+        return rendered_template
 
     def get_dashboard_list(self, paramOverwrite=None):
 
@@ -911,4 +919,4 @@ class Dashboard:
         template = env.get_template("list.jinja2")
         rendered_template = template.render(dash)
 
-        return (rendered_template)
+        return rendered_template

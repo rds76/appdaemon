@@ -5,12 +5,10 @@ import pytz
 import astral
 import random
 import uuid
-import time
 import re
 import asyncio
 import logging
 from collections import OrderedDict
-from copy import deepcopy
 
 import appdaemon.utils as utils
 from appdaemon.appdaemon import AppDaemon
@@ -89,7 +87,10 @@ class Scheduler:
                 return
             # Call function
             if "__entity" in args["kwargs"]:
-                await self.AD.threading.dispatch_worker(name, {
+                #
+                # it's a "duration" entry
+                #
+                executed = await self.AD.threading.dispatch_worker(name, {
                     "id": uuid_,
                     "name": name,
                     "objectid": self.AD.app_management.objects[name]["id"],
@@ -103,7 +104,29 @@ class Scheduler:
                     "pin_thread": args["pin_thread"],
                     "kwargs": args["kwargs"],
                 })
+
+                if executed is True:
+                    remove = args["kwargs"].get("oneshot", False)
+                    if remove is True:
+                        await self.AD.state.cancel_state_callback(args["kwargs"]["__handle"], name)
+                        
+                        if "__timeout" in args["kwargs"]: #meaning there is a timeout for this callback
+                            await self.cancel_timer(name, args["kwargs"]["__timeout"]) #cancel it as no more needed
+                            
+            elif "__state_handle" in args["kwargs"]:
+                #
+                # It's a state timeout entry - just delete the callback
+                #
+                await self.AD.state.cancel_state_callback(args["kwargs"]["__state_handle"], name)
+            elif "__event_handle" in args["kwargs"]:
+                #
+                # It's an event timeout entry - just delete the callback
+                #
+                await self.AD.events.cancel_event_callback(name, args["kwargs"]["__event_handle"])
             else:
+                #
+                # A regular callback
+                #
                 await self.AD.threading.dispatch_worker(name, {
                     "id": uuid_,
                     "name": name,
@@ -112,7 +135,7 @@ class Scheduler:
                     "function": args["callback"],
                     "pin_app": args["pin_app"],
                     "pin_thread": args["pin_thread"],
-                    "kwargs": deepcopy(args["kwargs"]),
+                    "kwargs": args["kwargs"]
                 })
             # If it is a repeating entry, rewrite with new timestamp
             if args["repeat"]:
@@ -123,11 +146,11 @@ class Scheduler:
                 else:
                     # Not sunrise or sunset so just increment
                     # the timestamp with the repeat interval
-                    args["basetime"] += timedelta(seconds = args["interval"])
+                    args["basetime"] += timedelta(seconds=args["interval"])
                     args["timestamp"] = args["basetime"] + timedelta(seconds=self.get_offset(args))
                 # Update entity
 
-                await self.AD.state.set_state("_scheduler", "admin", "scheduler_callback.{}".format(uuid_), execution_time = utils.dt_to_str(args["timestamp"].replace(microsecond=0), self.AD.tz))
+                await self.AD.state.set_state("_scheduler", "admin", "scheduler_callback.{}".format(uuid_), execution_time=utils.dt_to_str(args["timestamp"].replace(microsecond=0), self.AD.tz))
             else:
                 # Otherwise just delete
                 await self.AD.state.remove_entity("admin", "scheduler_callback.{}".format(uuid_))
@@ -153,10 +176,10 @@ class Scheduler:
         latitude = self.AD.latitude
         longitude = self.AD.longitude
 
-        if -90 > latitude < 90:
+        if latitude < -90 or latitude > 90:
             raise ValueError("Latitude needs to be -90 .. 90")
 
-        if -180 > longitude < 180:
+        if longitude < -180 or longitude > 180:
             raise ValueError("Longitude needs to be -180 .. 180")
 
         elevation = self.AD.elevation
@@ -209,7 +232,8 @@ class Scheduler:
 
         return next_setting_dt
 
-    def get_offset(self, kwargs):
+    @staticmethod
+    def get_offset(kwargs):
         if "offset" in kwargs["kwargs"]:
             if "random_start" in kwargs["kwargs"] \
                     or "random_end" in kwargs["kwargs"]:
@@ -268,18 +292,25 @@ class Scheduler:
             "kwargs": kwargs
         }
 
-        await self.AD.state.add_entity("admin", "scheduler_callback.{}".format(handle), "active",
-                                                                         {
-                                                                             "app": name,
-                                                                             "execution_time": utils.dt_to_str(ts.replace(microsecond=0), self.AD.tz),
-                                                                             "repeat": str(datetime.timedelta(seconds=interval)),
-                                                                             "function": callback.__name__,
-                                                                             "pinned": pin_app,
-                                                                             "pinned_thread": pin_thread,
-                                                                             "fired": 0,
-                                                                             "executed": 0,
-                                                                             "kwargs": kwargs
-                                                                         })
+        if callback is None:
+            function_name = "cancel_callback"
+        else:
+            function_name = callback.__name__
+
+        await self.AD.state.add_entity("admin",
+                                       "scheduler_callback.{}".format(handle),
+                                       "active",
+                                       {
+                                           "app": name,
+                                           "execution_time": utils.dt_to_str(ts.replace(microsecond=0), self.AD.tz),
+                                           "repeat": str(datetime.timedelta(seconds=interval)),
+                                           "function": function_name,
+                                           "pinned": pin_app,
+                                           "pinned_thread": pin_thread,
+                                           "fired": 0,
+                                           "executed": 0,
+                                           "kwargs": kwargs
+                                       })
                 # verbose_log(conf.logger, "INFO", conf.schedule[name][handle])
 
         if self.active is True:
@@ -352,7 +383,7 @@ class Scheduler:
                 if self.realtime is True:
                     self.now = now
                 else:
-                    if result == True:
+                    if result is True:
                         # We got kicked so lets figure out the elapsed pseudo time
                         delta = (now - self.last_fired).total_seconds() * self.AD.timewarp
                     else:
@@ -446,7 +477,8 @@ class Scheduler:
                 self.sanitize_timer_kwargs(self.AD.app_management.objects[name]["object"], callback["kwargs"])
             )
         else:
-            raise ValueError("Invalid handle: %s", handle)
+            self.logger.warning("Invalid timer handle given as: %s", handle)
+            return None
 
     async def get_scheduler_entries(self):
         schedule = {}
@@ -655,20 +687,22 @@ class Scheduler:
     #
     # Utilities
     #
-
-    def sanitize_timer_kwargs(self, app, kwargs):
+    @staticmethod
+    def sanitize_timer_kwargs(app, kwargs):
         kwargs_copy = kwargs.copy()
         return utils._sanitize_kwargs(kwargs_copy, [
             "interval", "constrain_days", "constrain_input_boolean", "_pin_app", "_pin_thread"
         ] + app.list_constraints())
 
-    def myround(self, x, base=1, prec=10):
+    @staticmethod
+    def myround(x, base=1, prec=10):
         if base == 0:
             return x
         else:
             return round(base * round(float(x) / base), prec)
 
-    def my_dt_round(self, dt, base=1, prec=10):
+    @staticmethod
+    def my_dt_round(dt, base=1, prec=10):
         if base == 0:
             return dt
         else:
@@ -677,7 +711,6 @@ class Scheduler:
             result = datetime.datetime.utcfromtimestamp(rounded)
             aware_result = pytz.utc.localize(result)
             return aware_result
-
 
     def convert_naive(self, dt):
         # Is it naive?

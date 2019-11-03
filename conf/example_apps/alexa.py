@@ -21,10 +21,10 @@ class Alexa(hass.Hass):
 
         if intent in intents:
             speech, card, title = intents[intent](data)
-            response = self.format_alexa_response(speech = speech, card = card, title = title)
-            self.log("Recieved Alexa request: {}, answering: {}".format(intent, speech))
+            response = self.format_alexa_response(speech=speech, card=card, title=title)
+            self.log("Received Alexa request: {}, answering: {}".format(intent, speech))
         else:
-            response = self.format_alexa_response(speech = "I'm sorry, the {} does not exist within AppDaemon".format(intent))
+            response = self.format_alexa_response(speech="I'm sorry, the {} does not exist within AppDaemon".format(intent))
 
         return response, 200
 
@@ -53,9 +53,9 @@ class Alexa(hass.Hass):
 
     def HouseStatus(self):
 
-        status = "The downstairs temperature is {} degrees farenheit,".format(self.entities.sensor.downstairs_thermostat_temperature.state)
-        status += "The upstairs temperature is {} degrees farenheit,".format(self.entities.sensor.upstairs_thermostat_temperature.state)
-        status += "The outside temperature is {} degrees farenheit,".format(self.entities.sensor.side_temp_corrected.state)
+        status = "The downstairs temperature is {} degrees fahrenheit,".format(self.entities.sensor.downstairs_thermostat_temperature.state)
+        status += "The upstairs temperature is {} degrees fahrenheit,".format(self.entities.sensor.upstairs_thermostat_temperature.state)
+        status += "The outside temperature is {} degrees fahrenheit,".format(self.entities.sensor.side_temp_corrected.state)
         status += self.Wendy()
         status += self.Andrew()
         status += self.Jack()
@@ -93,7 +93,7 @@ class Alexa(hass.Hass):
             "Jack is on the windowsill behind the bed",
             "Jack is out checking on his clown suit",
             "Jack is eating his treats",
-            "Jack just went out for a walk in the neigbourhood",
+            "Jack just went out for a walk in the neighborhood",
             "Jack is by his bowl waiting for treats"
         ]
 

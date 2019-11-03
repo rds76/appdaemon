@@ -11,11 +11,69 @@ import appdaemon.utils as utils
 
 from appdaemon.thread_async import AppDaemon
 
+
+class DuplicateFilter(logging.Filter):
+
+    def __init__(self, logger, threshold, delay, timeout):
+        self.logger = logger
+        self.last_log = None
+        self.current_count = 0
+        self.threshold = threshold
+        self.delay = delay
+        self.filtering = False
+        self.start_time = None
+        self.first_time = True
+        self.timeout = timeout
+        self.last_log_time = None
+
+    def filter(self, record):
+        if record.msg == "Previous message repeated %s times":
+            return True
+        if self.threshold == 0:
+            return True
+        current_log = (record.module, record.levelno, record.msg, record.args)
+        if current_log != self.last_log:
+            self.last_log = current_log
+            if self.filtering is True:
+                self.logger.info("Previous message repeated %s times", self.current_count - self.threshold + 1)
+            self.current_count = 0
+            self.filtering = False
+            self.start_time = None
+            result = True
+            self.first_time = True
+            self.last_log_time = datetime.datetime.now()
+        else:
+            now = datetime.datetime.now()
+            # Reset if we haven't exceeded the initial grace period
+            if self.filtering is False and now - self.last_log_time >= datetime.timedelta(seconds=self.timeout):
+                return True
+
+            if self.start_time is not None and now - self.start_time >= datetime.timedelta(seconds=self.delay):
+                self.start_time = now
+                if self.first_time is True:
+                    count = self.current_count - self.threshold + 1
+                    self.first_time = False
+                else:
+                    count = self.current_count + 1
+
+                self.logger.info("Previous message repeated %s times", count)
+                self.current_count = 0
+                result = True
+            else:
+                if self.filtering is False and self.current_count >= self.threshold - 1:
+                    self.filtering = True
+                    self.start_time = datetime.datetime.now()
+                if self.filtering is True:
+                    result = False
+                else:
+                    result = True
+                    self.last_log_time = datetime.datetime.now()
+                self.current_count += 1
+        return result
+
 class AppNameFormatter(logging.Formatter):
 
-    """
-    Logger formatter to add 'appname' as an interpolatable field
-    """
+    """Logger formatter to add 'appname' as an interpolatable field."""
 
     def __init__(self, fmt=None, datefmt=None, style=None):
         super().__init__(fmt, datefmt, style)
@@ -25,30 +83,36 @@ class AppNameFormatter(logging.Formatter):
         # Figure out the name of the app and add it to the LogRecord
         # Each logger is named after the app so split it out form the logger name
         #
-        appname = record.name
-        modulename = record.name
-        if "." in record.name:
-            loggers = record.name.split(".")
-            name = loggers[len(loggers) - 1]
-            if name[0] == "_":
-                # It's a module
-                appname = "AppDaemon"
-                modulename = "AD:" + name[1:]
-            else:
-                # It's an app
-                appname = name
-                modulename = "App:" + appname
+        try:
+            appname = record.name
+            modulename = record.name
+            if "." in record.name:
+                loggers = record.name.split(".")
+                name = loggers[len(loggers) - 1]
+                if name[0] == "_":
+                    # It's a module
+                    appname = "AppDaemon"
+                    modulename = "AD:" + name[1:]
+                else:
+                    # It's an app
+                    appname = name
+                    modulename = "App:" + appname
 
-        record.modulename = modulename
-        record.appname = appname
-        return super().format(record)
+            record.modulename = modulename
+            record.appname = appname
+            result = super().format(record)
+        except:
+            raise
+
+        return result
 
 
 class LogSubscriptionHandler(StreamHandler):
 
-    """
-    Handle apps that subscribe to logs
-    This Handler requires that it's formatter is an instance of AppNameFormatter
+    """Handle apps that subscribe to logs.
+
+    This Handler requires that it's formatter is an instance of AppNameFormatter.
+
     """
 
     def __init__(self, ad: AppDaemon, type):
@@ -57,12 +121,18 @@ class LogSubscriptionHandler(StreamHandler):
         self.type = type
 
     def emit(self, record):
+        logger = self.AD.logging.get_logger()
         try:
             if self.AD is not None and self.AD.callbacks is not None and self.AD.events is not None and self.AD.thread_async is not None:
-                msg = self.format(record)
+                try:
+                    msg = self.format(record)
+                except TypeError as e:
+                    logger.warning("Log formatting error - '%s'", e)
+                    logger.warning("message: %s, args: %s", record.msg, record.args)
+                    return
                 record.ts = datetime.datetime.fromtimestamp(record.created)
                 self.AD.thread_async.call_async_no_wait(
-                    self.AD.events.process_event, "global",
+                    self.AD.events.process_event, "admin",
                     {"event_type": "__AD_LOG_EVENT",
                      "data":
                          {
@@ -76,12 +146,11 @@ class LogSubscriptionHandler(StreamHandler):
                              "formatted_message": msg
                          }})
         except:
-            # No way to log this so we'll just do our best
-            print('-' * 60, )
-            print("Unrecoverable error occured in LogSubscriptionHandler.emit()")
-            print('-' * 60)
-            print(traceback.format_exc())
-            print('-' * 60)
+            logger.warning('-' * 60)
+            logger.warning("Unexpected error occured in LogSubscriptionHandler.emit()")
+            logger.warning('-' * 60)
+            logger.warning(traceback.format_exc())
+            logger.warning('-' * 60)
 
 
 class Logging:
@@ -100,6 +169,8 @@ class Logging:
         self.AD = None
         self.tz = None
 
+        logging.raiseExceptions = False
+
         # Set up defaults
 
         default_filename = "STDOUT"
@@ -107,6 +178,9 @@ class Logging:
         default_log_generations = 3
         default_format = "{asctime} {levelname} {appname}: {message}"
         default_date_format = "%Y-%m-%d %H:%M:%S.%f"
+        default_filter_threshold = 1
+        default_filter_timeout = 0.1
+        default_filter_repeat_delay = 5
         self.log_level = log_level
 
         self.config = \
@@ -120,7 +194,10 @@ class Logging:
                         'format': default_format,
                         'date_format': default_date_format,
                         'logger': None,
-                        'formatter': None
+                        'formatter': None,
+                        'filter_threshold': default_filter_threshold,
+                        'filter_timeout': default_filter_timeout,
+                        'filter_repeat_delay': default_filter_repeat_delay
                     },
                 'error_log':
                     {
@@ -131,7 +208,10 @@ class Logging:
                         'format': default_format,
                         'date_format': default_date_format,
                         'logger': None,
-                        'formatter': None
+                        'formatter': None,
+                        'filter_threshold': default_filter_threshold,
+                        'filter_timeout': default_filter_timeout,
+                        'filter_repeat_delay': default_filter_repeat_delay
                     },
                 'access_log':
                     {
@@ -157,6 +237,9 @@ class Logging:
                     self.config[log]["log_size"] = default_logsize
                     self.config[log]["format"] = "{asctime} {levelname} {appname}: {message}"
                     self.config[log]["date_format"] = default_date_format
+                    self.config[log]["filter_threshold"] = default_filter_threshold
+                    self.config[log]["filter_timeout"] = default_filter_timeout
+                    self.config[log]["filter_repeat_delay"] = default_filter_repeat_delay
                     # Copy over any user defined fields
                     for arg in config[log]:
                         self.config[log][arg] = config[log][arg]
@@ -168,6 +251,9 @@ class Logging:
                     self.config[log]["log_size"] = default_logsize
                     self.config[log]["format"] = "{asctime} {levelname} {appname}: {message}"
                     self.config[log]["date_format"] = default_date_format
+                    self.config[log]["filter_threshold"] = default_filter_threshold
+                    self.config[log]["filter_timeout"] = default_filter_timeout
+                    self.config[log]["filter_repeat_delay"] = default_filter_repeat_delay
                     self.config[log].pop("alias")
                     for arg in config[log]:
                         self.config[log][arg] = config[log][arg]
@@ -185,6 +271,7 @@ class Logging:
                 args["formatter"] = formatter
                 formatter.formatTime = self.get_time
                 logger = logging.getLogger(args["name"])
+                logger.addFilter(DuplicateFilter(logger, args["filter_threshold"], args["filter_repeat_delay"], args["filter_timeout"]))
                 args["logger"] = logger
                 logger.setLevel(log_level)
                 logger.propagate = False
@@ -196,6 +283,7 @@ class Logging:
                     handler = RotatingFileHandler(args["filename"], maxBytes=args["log_size"], backupCount=args["log_generations"])
                 self.config[log]["handler"] = handler
                 handler.setFormatter(formatter)
+                logger.addFilter(DuplicateFilter(logger, args["filter_threshold"], args["filter_repeat_delay"], args["filter_timeout"]))
                 logger.addHandler(handler)
 
         # Setup any aliases
@@ -209,6 +297,9 @@ class Logging:
                 self.config[log]["log_size"] = self.config[self.config[log]["alias"]]["log_size"]
                 self.config[log]["format"] = self.config[self.config[log]["alias"]]["format"]
                 self.config[log]["date_format"] = self.config[self.config[log]["alias"]]["date_format"]
+                self.config[log]["filter_threshold"] = self.config[self.config[log]["alias"]]["filter_threshold"]
+                self.config[log]["filter_timeout"] = self.config[self.config[log]["alias"]]["filter_timeout"]
+                self.config[log]["filter_repeat_delay"] = self.config[self.config[log]["alias"]]["filter_repeat_delay"]
 
         self.logger = self.get_logger()
         self.error = self.get_error()
@@ -287,14 +378,15 @@ class Logging:
 
     def get_child(self, name):
         logger = self.get_logger().getChild(name)
+        logger.addFilter(
+            DuplicateFilter(logger, self.config["main_log"]["filter_threshold"], self.config["main_log"]["filter_repeat_delay"], self.config["main_log"]["filter_timeout"]))
+
         if name in self.AD.module_debug:
             logger.setLevel(self.AD.module_debug[name])
         else:
             logger.setLevel(self.AD.loglevel)
 
         return logger
-
-    # Reading Logs
 
     # Run in executor
     def get_admin_logs(self):

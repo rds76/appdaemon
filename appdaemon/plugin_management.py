@@ -7,6 +7,7 @@ import async_timeout
 
 from appdaemon.appdaemon import AppDaemon
 
+
 class PluginBase:
 
     """
@@ -17,7 +18,6 @@ class PluginBase:
 
         self.AD = ad
         self.logger = self.AD.logging.get_child(name)
-
 
     def set_log_level(self, level):
         self.logger.setLevel(self.AD.logging.log_levels[level])
@@ -101,6 +101,9 @@ class Plugins:
 
                         if namespace in self.plugin_objs:
                             raise ValueError("Duplicate namespace: {}".format(namespace))
+                        
+                        if "namespace" not in self.plugins[name]:
+                            self.plugins[name]["namespace"] = namespace
 
                         self.plugin_objs[namespace] = {"object": plugin, "active": False}
 
@@ -117,7 +120,6 @@ class Plugins:
         for plugin in self.plugin_objs:
             self.plugin_objs[plugin]["object"].stop()
 
-
     def run_plugin_utility(self):
         for plugin in self.plugin_objs:
             if hasattr(self.plugin_objs[plugin]["object"].utility(), "utility"):
@@ -127,7 +129,7 @@ class Plugins:
 
         if meta is not None:
             for key in self.required_meta:
-                if getattr(self.AD, key) == None:
+                if getattr(self.AD, key) is None:
                     if key in meta:
                         # We have a value so override
                         setattr(self.AD, key, meta[key])
@@ -165,7 +167,7 @@ class Plugins:
                 self.AD.state.set_namespace_state(namespace, state)
 
                 if not first_time:
-                    await self.AD.app_management.check_app_updates(self.get_plugin_from_namespace(namespace))
+                    await self.AD.app_management.check_app_updates(self.get_plugin_from_namespace(namespace), mode="init")
                 else:
                     self.logger.info("Got initial state from namespace %s", namespace)
 
@@ -229,7 +231,7 @@ class Plugins:
     def required_meta_check(self):
         OK = True
         for key in self.required_meta:
-            if getattr(self.AD, key) == None:
+            if getattr(self.AD, key) is None:
                 # No value so bail
                 self.logger.error("Required attribute not set or obtainable from any plugin: %s", key)
                 OK = False
