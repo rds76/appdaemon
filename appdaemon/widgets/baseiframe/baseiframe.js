@@ -70,10 +70,16 @@ function baseiframe(widget_id, url, skin, parameters)
         }
     }
     
-    function setImgObjectUrl(self, url){
-        var auth = ("token" in self.parameters) ? {'Authorization': 'Bearer ' + self.parameters.token} : {};
-        $.get({url: url,  headers: auth , cache: false, xhrFields: {responseType: 'blob'}})
-             .done(function(data) {               
+    function setImgObjectUrl(self, url)
+    {
+       if ("token" in self.parameters) {
+          var auth = {'Authorization': 'Bearer ' + self.parameters.token};
+       } else {
+           self.set_field(self, "img_src", url);
+           return;
+       }
+       $.get({url: url,  headers: auth , cache: false, xhrFields: {responseType: 'blob'}})
+             .done(function(data) {
                 var urlref = window.URL || window.webkitURL;
                 imgUrl = urlref.createObjectURL(data);
                 self.set_field(self, "img_src", imgUrl);
