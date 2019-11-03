@@ -41,8 +41,7 @@ function baseiframe(widget_id, url, skin, parameters)
             {
                 url = url + "?time=" + Math.floor((new Date).getTime()/1000);
             }
-            var imgUrl = getImgObjectUrl(self, url);
-            self.set_field(self, "img_src", imgUrl);
+            setImgObjectUrl(self, url);            
             size = self.parameters.img_list.length
         }
         else if ("entity_picture" in self.parameters)
@@ -56,8 +55,7 @@ function baseiframe(widget_id, url, skin, parameters)
             {
                 url = url + "?time=" + Math.floor((new Date).getTime()/1000);
             }
-            var imgUrl = getImgObjectUrl(self, url);
-            self.set_field(self, "img_src", imgUrl);
+            setImgObjectUrl(self, url);            
             size = 1
         }
         
@@ -72,12 +70,13 @@ function baseiframe(widget_id, url, skin, parameters)
         }
     }
     
-    function getImgObjectUrl(self, url){
-        var auth = ("token" in self.parameters) ? {'Authorization': 'Bearer ' + self.parameters.token} : {}
+    function setImgObjectUrl(self, url){
+        var auth = ("token" in self.parameters) ? {'Authorization': 'Bearer ' + self.parameters.token} : {};
         $.get({url: url,  headers: auth , cache: false, xhrFields: {responseType: 'blob'}})
              .done(function(data) {               
-                var url = window.URL || window.webkitURL;
-                return url.createObjectURL(data);
+                var urlref = window.URL || window.webkitURL;
+                imgUrl = urlref.createObjectURL(data);
+                self.set_field(self, "img_src", imgUrl);
               })
     }
 }
