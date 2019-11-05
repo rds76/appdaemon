@@ -19,7 +19,7 @@ function baseiframe(widget_id, url, skin, parameters)
     if ("url_list" in parameters || "img_list" in parameters || "entity_picture" in parameters)
     {
         self.index = 0;
-        //set tranparent 1x1px gif at load
+        //set transparent 1x1px gif at load
         self.set_field(self, "img_src", "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");
         refresh_frame(self)
     }
@@ -84,12 +84,15 @@ function baseiframe(widget_id, url, skin, parameters)
              .done(function(data) {
                 var urlref = window.URL || window.webkitURL;
                 imgUrl = urlref.createObjectURL(data);
-                // revoke previous objet
                 var currentObject = self.ViewModel["img_src"]();
-                if (data.size > 1024) { self.set_field(self, "img_src", imgUrl); }
-                if (currentObject && currentObject.startsWith('blob:')) {
-                    urlref.revokeObjectURL(currentObject);
-                }
+                if (data.size > 1024) // ignore incomplete data and leave current image
+                {
+                  self.set_field(self, "img_src", imgUrl);
+                  // revoke previous object
+                  if (currentObject && currentObject.startsWith('blob:')) {
+                      urlref.revokeObjectURL(currentObject);
+                  }
+                } 
               })
     }
 }
