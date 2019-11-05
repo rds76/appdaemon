@@ -19,6 +19,8 @@ function baseiframe(widget_id, url, skin, parameters)
     if ("url_list" in parameters || "img_list" in parameters || "entity_picture" in parameters)
     {
         self.index = 0;
+        //set tranparent 1x1px gif at load
+        self.set_field(self, "img_src", "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");
         refresh_frame(self)
     }
     
@@ -41,7 +43,7 @@ function baseiframe(widget_id, url, skin, parameters)
             {
                 url = url + "?time=" + Math.floor((new Date).getTime()/1000);
             }
-            setImgObjectUrl(self, url);            
+            setImgObjectUrl(self, url);
             size = self.parameters.img_list.length
         }
         else if ("entity_picture" in self.parameters)
@@ -55,7 +57,7 @@ function baseiframe(widget_id, url, skin, parameters)
             {
                 url = url + "?time=" + Math.floor((new Date).getTime()/1000);
             }
-            setImgObjectUrl(self, url);            
+            setImgObjectUrl(self, url);
             size = 1
         }
         
@@ -74,15 +76,20 @@ function baseiframe(widget_id, url, skin, parameters)
     {
        if ("token" in self.parameters) {
           var auth = {'Authorization': 'Bearer ' + self.parameters.token};
-       } else {
+        } else {
            self.set_field(self, "img_src", url);
            return;
-       }
-       $.get({url: url,  headers: auth , cache: false, xhrFields: {responseType: 'blob'}})
+        }
+        $.get({url: url,  headers: auth, xhrFields: {responseType: 'blob'}, async: true})
              .done(function(data) {
                 var urlref = window.URL || window.webkitURL;
                 imgUrl = urlref.createObjectURL(data);
-                self.set_field(self, "img_src", imgUrl);
+                // revoke previous objet
+                var currentObject = self.ViewModel["img_src"]();
+                if (data.size > 1024) { self.set_field(self, "img_src", imgUrl); }
+                if (currentObject && currentObject.startsWith('blob:')) {
+                    urlref.revokeObjectURL(currentObject);
+                }
               })
     }
 }
