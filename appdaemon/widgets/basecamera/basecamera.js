@@ -4,29 +4,29 @@ function basecamera(widget_id, url, skin, parameters)
 
      // Initialization
 
-     self.parameters = parameters;
+    self.parameters = parameters;
 
-     var callbacks = []
+    var callbacks = []
 
-     self.OnStateAvailable = OnStateAvailable
+    self.OnStateAvailable = OnStateAvailable
     self.OnStateUpdate = OnStateUpdate
 
-     var monitored_entities = 
+    var monitored_entities = 
         [
             {"entity": parameters.entity, "initial": self.OnStateAvailable, "update": self.OnStateUpdate},
         ];
 
      // Call the parent constructor to get things moving
 
-     WidgetBase.call(self, widget_id, url, skin, parameters, monitored_entities, callbacks);
+    WidgetBase.call(self, widget_id, url, skin, parameters, monitored_entities, callbacks);
 
      // Set the url
 
-     self.index = 0;
+    self.index = 0;
     refresh_frame(self)
     self.timeout = undefined
 
-     function refresh_frame(self)
+    function refresh_frame(self)
     {
         if ("base_url" in self.parameters && "access_token" in self) {
             var endpoint = '/api/camera_proxy/'
@@ -34,32 +34,33 @@ function basecamera(widget_id, url, skin, parameters)
                 endpoint = '/api/camera_proxy_stream/'
             }
 
-             var url = self.parameters.base_url + endpoint + self.parameters.entity + '?token=' + self.access_token 
+            var url = self.parameters.base_url + endpoint + self.parameters.entity + '?token=' + self.access_token 
+            if (url.indexOf('?') > -1)
+            {
+              url = url + "&time=" + Math.floor((new Date).getTime()/1000);
+            }
+            else
+            {
+              url = url + "?time=" + Math.floor((new Date).getTime()/1000);
+            }
         } 
         else 
         {
-            var url = '/images/Blank.gif'
+            var url = "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
         }
 
-         if (url.indexOf('?') > -1)
-        {
-            url = url + "&time=" + Math.floor((new Date).getTime()/1000);
-        }
-        else
-        {
-            url = url + "?time=" + Math.floor((new Date).getTime()/1000);
-        }
         self.set_field(self, "img_src", url);
         self.index = 0
 
-         var refresh = 10
-         if ('stream' in self.parameters && self.parameters.stream == "on") {
+        var refresh = 10
+        if ('stream' in self.parameters && self.parameters.stream == "on") {
             refresh = 0
-        }
-        if ("refresh" in self.parameters)
-        {
-            refresh = self.parameters.refresh
-        }
+        } else {
+         if ("refresh" in self.parameters)
+         {
+             refresh = self.parameters.refresh
+         }
+        } 
  
         if (refresh > 0)
         {
@@ -75,7 +76,7 @@ function basecamera(widget_id, url, skin, parameters)
     // self.state[<entity>] has valid information for the requested entity
     // state is the initial state
 
-     function OnStateAvailable(self, state)
+    function OnStateAvailable(self, state)
     {   
         self.state = state.state;
         self.access_token = state.attributes.access_token
@@ -86,7 +87,7 @@ function basecamera(widget_id, url, skin, parameters)
     // receives a state update - its new values will be available
     // in self.state[<entity>] and returned in the state parameter
 
-     function OnStateUpdate(self, state)
+    function OnStateUpdate(self, state)
     {
         self.state = state.state;
         self.access_token = state.attributes.access_token
